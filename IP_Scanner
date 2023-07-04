@@ -30,6 +30,7 @@ class progress(QThread):
 
         # 작업 완료 후 시그널 발생
         self.finished.emit()
+
 # 전처리 (엑셀 기준으로 데이터가 존재하는 행과 열부터 시작하도록 DataFrame 자르기)
 def preprocessing(data):
     data = data[data.apply(lambda row: any(row.notna()), axis=1)]
@@ -156,17 +157,17 @@ def Verification(file, scan_result, output_file):
         data = preprocessing(data)
         # IP 주소 정규표현식
         pattern = r'^(?!255\.255\.255\.(?:128|192|224|240|248|252|255)$)(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}(?!0)([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
-        # IP 컬럼 가져오기
-        ip_columns = get_ip_columns(data, pattern)
-        # 호스트 컬럼 가져오기
-        host_column = get_host_column(data)
         # 결과 저장할 DataFrame
         result = data.copy()
         result['result'] = ''
-        
+        # IP 컬럼 가져오기
+        ip_columns = get_ip_columns(data, pattern)
         # 정상 IP 주소 값만 필터링 + (비정상 IP 주소 저장할 배열 만들기)
         unnormal_ip_L = []
         normal_ip_DF = filtering_ip(data, pattern, ip_columns, unnormal_ip_L)
+        
+        # 호스트 컬럼 가져오기
+        host_column = get_host_column(data)
 
         #관리대장 ip(key), host(value) 딕셔너리
         excel_dict = dict(zip(normal_ip_DF[ip_columns[0]], normal_ip_DF[host_column]))
@@ -230,21 +231,21 @@ def save_to_excel(result, ip_column, host_column, output_file):
                     apply_color(worksheet, row=cell.row, column=ip_column_index, color='FFFF00')
                     
                 elif '호스트 불일치' == cell.value:
-                    # '호스트 불일치' 행에 대해서만 보라색 적용
+                    # '호스트 불일치' 행에 대해서만 색상 적용(실버블론드)
                     for column in worksheet.iter_cols(min_row=cell.row, max_row=cell.row, min_col=1, max_col=worksheet.max_column):
                         for cell in column:
-                            apply_color(worksheet, row=cell.row, column=cell.column, color='E3C9E8')
+                            apply_color(worksheet, row=cell.row, column=cell.column, color='FFFFCC')
 
-                    # result 컬럼에 색상 적용 (더 진한 보라색)
-                    apply_color(worksheet, row=cell.row, column=cell.column, color='FF00FF')
+                    # result 컬럼에 색상 적용 (카키)
+                    apply_color(worksheet, row=cell.row, column=cell.column, color='CC9933')
 
-                    # 호스트 컬럼에 색상 적용 (더 진한 보라색)
+                    # 호스트 컬럼에 색상 적용 (카키)
                     ip_column_index = result.columns.get_loc(host_column) + 1
-                    apply_color(worksheet, row=cell.row, column=ip_column_index, color='FF00FF')
+                    apply_color(worksheet, row=cell.row, column=ip_column_index, color='CC9933')
                     
-                    # IP 주소 컬럼에 색상 적용 (더 진한 보라색)
+                    # IP 주소 컬럼에 색상 적용 (카키)
                     ip_column_index = result.columns.get_loc(ip_column[0]) + 1
-                    apply_color(worksheet, row=cell.row, column=ip_column_index, color='FF00FF')
+                    apply_color(worksheet, row=cell.row, column=ip_column_index, color='CC9933')
                 
                 elif 'No IP Address' in cell.value:
                     # 'No IP Address' 행에 대해서만 분홍색 적용
@@ -405,7 +406,7 @@ class MyWindow(QMainWindow):
         self.initUI()
 
     def initUI(self):
-        self.setWindowIcon(QIcon('free-icon-potato-3416652.png'))
+        self.setWindowIcon(QIcon(''))
         self.setWindowTitle('IP 관리대장 점검 시스템')
         self.resize(800, 400)
         self.center()
@@ -417,7 +418,7 @@ class MyWindow(QMainWindow):
 
         
         
-        self.font = QLabel('@Copyrlghts by TMI Potato',self)
+        self.font = QLabel('@Copyrights by TMI Potato',self)
         self.font.setGeometry(595,355,230,50)
         font = self.font.font()
         font.setPointSize(6)
@@ -526,7 +527,6 @@ class MyWindow(QMainWindow):
         new_file_name = file_name_without_ext + "_Result" + file_ext
         new_file_dir = save_text + '/' + new_file_name
         scan_result = test_connection(ipaddress)
-        print(scan_result)
 
         if scan_result == False:
             QMessageBox.information(self, '알림', '스캔중 오류가 발생했습니다.\n 네트워크 대역을 다시 확인해주세요.')
