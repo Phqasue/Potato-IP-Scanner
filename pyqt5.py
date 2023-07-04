@@ -1,9 +1,8 @@
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices
-from PyQt5.QtCore import QUrl
+from PyQt5.QtCore import QUrl, QThread, pyqtSignal, Qt
 from openpyxl import Workbook
-from openpyxl.styles import Border, Side, PatternFill
+from openpyxl.styles import Border, Side, PatternFill, NamedStyle, Alignment, Font
 from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.styles import NamedStyle, PatternFill, Alignment, Font
 from PyQt5.QtWidgets import *
 from queue import Queue
 import threading
@@ -15,8 +14,22 @@ import subprocess
 import re
 import pandas as pd
 import os
+import time
 
+class progress(QThread):
+    update_progress = pyqtSignal(int)
+    
+    def run(self):
+        total = 100
+        for i in range(total + 1):
+            # 작업 수행
+            time.sleep(0.1)
 
+            # 진행률 업데이트
+            self.update_progress.emit(i)
+
+        # 작업 완료 후 시그널 발생
+        self.finished.emit()
 # 전처리 (엑셀 기준으로 데이터가 존재하는 행과 열부터 시작하도록 DataFrame 자르기)
 def preprocessing(data):
     data = data[data.apply(lambda row: any(row.notna()), axis=1)]
@@ -32,7 +45,15 @@ def get_ip_columns(data, pattern):
     ip_columns = [column for column in data.columns if data[column].apply(lambda x: isinstance(x, str) and re.match(pattern, x)).any()]
     return ip_columns
 
-# 정상 IP 주소 필터링 + (비정상 IP 주소는 unnormal_ip_L에 추가, 리턴 안해도 반영 돼용)
+# 호스트 컬럼이름
+def get_host_column(data):
+    for column in data.columns:
+        if 'host' in column.lower() or '호스트' in column:
+            host_column = column
+            break
+    return host_column
+
+# 정상 IP 주소 필터링 + (비정상 IP 주소는 unnormal_ip_L에 추가, 리턴 안해도 반영됨)
 def filtering_ip(data, pattern, ip_columns, unnormal_ip_L):
     dropped_data = data.copy()
     dropped_data.dropna(subset=[ip_columns[0]], inplace=True)
@@ -77,7 +98,7 @@ def classification_data(excel_dict, unnormal_ip_L, scan_result, ip_columns, resu
         if chk_null_ip:
             result = process_null_ip(result, ip_columns)
     except:
-        return
+        return 
     else:
         return result
 
@@ -137,6 +158,8 @@ def Verification(file, scan_result, output_file):
         pattern = r'^(?!255\.255\.255\.(?:128|192|224|240|248|252|255)$)(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}(?!0)([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
         # IP 컬럼 가져오기
         ip_columns = get_ip_columns(data, pattern)
+        # 호스트 컬럼 가져오기
+        host_column = get_host_column(data)
         # 결과 저장할 DataFrame
         result = data.copy()
         result['result'] = ''
@@ -146,25 +169,22 @@ def Verification(file, scan_result, output_file):
         normal_ip_DF = filtering_ip(data, pattern, ip_columns, unnormal_ip_L)
 
         #관리대장 ip(key), host(value) 딕셔너리
-        excel_dict = dict(zip(normal_ip_DF[ip_columns[0]], normal_ip_DF['host']))
+        excel_dict = dict(zip(normal_ip_DF[ip_columns[0]], normal_ip_DF[host_column]))
         
         # 대장 처리 및 스캔 결과 처리
         result = classification_data(excel_dict, unnormal_ip_L, scan_result, ip_columns, result)
-        if result == None:
-            return False
 
         # 결과 저장
-        save_to_excel(result, ip_columns, output_file)
+        save_to_excel(result, ip_columns, host_column, output_file)
     except Exception as error:
+        print(error)
         return False
     else:
         return True
 
 
-# 엑셀 출력 예쁘게 하기 위한 함수들이예용 (아래 3개!)
-# vscode로 코드를 작성하고 있다면
-# 해당 함수의 행 번호에 마우스 올려서 접으면 코드 보기 편할거예용
-def save_to_excel(result, ip_column, output_file):
+# 엑셀 출력
+def save_to_excel(result, ip_column, host_column, output_file):
     # 결과 엑셀 파일(.xlsx)로 출력하기
     workbook = Workbook()
     worksheet = workbook.active
@@ -198,14 +218,14 @@ def save_to_excel(result, ip_column, output_file):
                         for cell in column:
                             apply_color(worksheet, row=cell.row, column=cell.column, color='F6F5CC')
 
-                    # result 컬럼에 색상 적용
+                    # result 컬럼에 색상 적용 (더 진한 노란색)
                     apply_color(worksheet, row=cell.row, column=cell.column, color='FFFF00')
 
-                    # 'host' 컬럼에 색상 적용
-                    ip_column_index = result.columns.get_loc('host') + 1
+                    # 호스트 컬럼에 색상 적용 (더 진한 노란색)
+                    ip_column_index = result.columns.get_loc(host_column) + 1
                     apply_color(worksheet, row=cell.row, column=ip_column_index, color='FFFF00')
 
-                    # IP 주소 컬럼에 색상 적용
+                    # IP 주소 컬럼에 색상 적용 (더 진한 노란색)
                     ip_column_index = result.columns.get_loc(ip_column[0]) + 1
                     apply_color(worksheet, row=cell.row, column=ip_column_index, color='FFFF00')
                     
@@ -215,14 +235,14 @@ def save_to_excel(result, ip_column, output_file):
                         for cell in column:
                             apply_color(worksheet, row=cell.row, column=cell.column, color='E3C9E8')
 
-                    # result 컬럼에 색상 적용
+                    # result 컬럼에 색상 적용 (더 진한 보라색)
                     apply_color(worksheet, row=cell.row, column=cell.column, color='FF00FF')
 
-                    # 'host' 컬럼에 색상 적용
-                    ip_column_index = result.columns.get_loc('host') + 1
+                    # 호스트 컬럼에 색상 적용 (더 진한 보라색)
+                    ip_column_index = result.columns.get_loc(host_column) + 1
                     apply_color(worksheet, row=cell.row, column=ip_column_index, color='FF00FF')
                     
-                    # IP 주소 컬럼에 색상 적용
+                    # IP 주소 컬럼에 색상 적용 (더 진한 보라색)
                     ip_column_index = result.columns.get_loc(ip_column[0]) + 1
                     apply_color(worksheet, row=cell.row, column=ip_column_index, color='FF00FF')
                 
@@ -232,10 +252,10 @@ def save_to_excel(result, ip_column, output_file):
                         for cell in column:
                             apply_color(worksheet, row=cell.row, column=cell.column, color='F6D8CE')
 
-                    # result 컬럼에 색상 적용
+                    # result 컬럼에 색상 적용 (더 진한 분홍색)
                     apply_color(worksheet, row=cell.row, column=cell.column, color='FF8888')
 
-                    # IP 주소 컬럼에 색상 적용
+                    # IP 주소 컬럼에 색상 적용 (더 진한 분홍색)
                     ip_column_index = result.columns.get_loc(ip_column[0]) + 1
                     apply_color(worksheet, row=cell.row, column=ip_column_index, color='FF8888')
                     
@@ -246,10 +266,10 @@ def save_to_excel(result, ip_column, output_file):
                         for cell in column:
                             apply_color(worksheet, row=cell.row, column=cell.column, color='ECCDB0')
 
-                    # result 컬럼에 색상 적용
+                    # result 컬럼에 색상 적용 (더 진한 주황색)
                     apply_color(worksheet, row=cell.row, column=cell.column, color='E26B0A')
 
-                    # IP 주소 컬럼에 색상 적용
+                    # IP 주소 컬럼에 색상 적용 (더 진한 주황색)
                     ip_column_index = result.columns.get_loc(ip_column[0]) + 1
                     apply_color(worksheet, row=cell.row, column=ip_column_index, color='E26B0A')
                 
@@ -302,6 +322,7 @@ def apply_borders(worksheet, start_row, start_col, end_row, end_col):
 def apply_color(worksheet, row, column, color):
     cell = worksheet.cell(row=row, column=column)
     cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+
 
 def get_all_ip_addresses(cidr):        #cidr 형식을 배열로 푸는 과정 192.168.0.1/24 -> [192.168.0.1, 192.168.0.2 ... 192.168.0.254]
     ip_network = ipaddress.ip_network(cidr)
@@ -388,6 +409,12 @@ class MyWindow(QMainWindow):
         self.setWindowTitle('IP 관리대장 점검 시스템')
         self.resize(800, 400)
         self.center()
+                
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setGeometry(70,305,560,40)
+
+        self.progress_bar.setStyleSheet("border: 5px solid; background-color: white")
+
         
         
         self.font = QLabel('@Copyrlghts by TMI Potato',self)
@@ -474,9 +501,9 @@ class MyWindow(QMainWindow):
         if push_file == '':
             QMessageBox.warning(self, '경고', 'IP 관리 대장을 불러와주세요.')
             return
-        # elif os.path.splitext(push_text)[1] != '.xlsx':
-        #     QMessageBox.warning(self, '경고', '올바르지 않은 파일 형식입니다.')
-        #     return
+        elif os.path.splitext(push_file)[1] != '.xlsx':
+            QMessageBox.warning(self, '경고', '올바르지 않은 파일 형식입니다.')
+            return
         elif save_text == '':
             QMessageBox.warning(self, '경고', '저장 위치를 선택해주세요.')
             return
@@ -485,6 +512,14 @@ class MyWindow(QMainWindow):
             return
         
         QMessageBox.information(self, '알림', '스캔이 정상적으로 시작이 되었습니다.')
+        self.scanbutton.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%p%")  # 진행 상황 표시 형식 설정
+        self.progress_bar.setAlignment(Qt.AlignCenter)  # 진행 상황 텍스트 가운데 정렬
+        self.thread = progress()
+        self.thread.update_progress.connect(self.update_progress_bar)
+        self.thread.finished.connect(self.progress_finished)
+        self.thread.start()
 
         ipaddress = self.cb.currentText()
         file_name_without_ext, file_ext = os.path.splitext(os.path.basename(push_file))
@@ -505,7 +540,12 @@ class MyWindow(QMainWindow):
         else:
             QMessageBox.information(self, '알림', '파일 비교중 오류가 발생했습니다.')
             return
-
+        
+    def update_progress_bar(self,value):
+        self.progress_bar.setValue(value)
+        
+    def progress_finished(self):
+        self.scanbutton.setEnabled(True)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
